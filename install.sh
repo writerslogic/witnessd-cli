@@ -1,10 +1,10 @@
 #!/bin/bash
 # witnessd installer
-# Usage: curl -sSf https://raw.githubusercontent.com/writerslogic/witnessd/main/install.sh | sh
+# Usage: curl -sSf https://raw.githubusercontent.com/writerslogic/witnessd-cli/main/install.sh | sh
 
 set -e
 
-REPO="writerslogic/witnessd"
+REPO="writerslogic/witnessd-cli"
 BINARY_NAME="witnessd-cli"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
