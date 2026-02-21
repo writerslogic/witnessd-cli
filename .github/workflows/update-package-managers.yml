@@ -116,7 +116,7 @@ jobs:
               "version": "${VERSION}",
               "description": "Cryptographic authorship witnessing for writers and creators",
               "homepage": "https://writerslogic.com",
-              "license": "Apache-2.0",
+              "license": "GPL-3.0-only",
               "architecture": {
                   "64bit": {
                       "url": "${URL}",

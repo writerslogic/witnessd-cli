@@ -3,7 +3,7 @@
 Command-line interface for [witnessd](https://github.com/writerslogic/witnessd) — cryptographic authorship witnessing for writers and creators.
 
 [![Build Status](https://github.com/writerslogic/witnessd-cli/workflows/CI/badge.svg)](https://github.com/writerslogic/witnessd-cli/actions)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ## Installation
 
@@ -48,7 +48,9 @@ Linux packaging configs (Debian, RPM, AppImage, systemd) are in the `packaging/l
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+Licensed under the [GNU General Public License v3.0](LICENSE).
+
+For commercial licensing inquiries (embedding witnessd in proprietary software), contact: licensing@writerslogic.com
 
 ## Related
 
