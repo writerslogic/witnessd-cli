@@ -27,6 +27,75 @@ use witnessd_core::{derive_hmac_key, DaemonManager, SecureEvent, SecureStore};
 
 mod smart_defaults;
 
+// =============================================================================
+// RATS PoP Spec Constants (draft-condrey-rats-pop)
+// =============================================================================
+
+/// CBOR tag for evidence packets per CDDL: pop-evidence = #6.1129336656(evidence-packet)
+const CBOR_TAG_EVIDENCE_PACKET: u64 = 1129336656;
+
+/// CBOR tag for attestation results per CDDL: pop-war = #6.1129791826(attestation-result)
+const CBOR_TAG_ATTESTATION_RESULT: u64 = 1129791826;
+
+/// Profile URIs per CDDL
+const PROFILE_URI_CORE: &str = "urn:ietf:params:rats:pop:profile:core";
+const PROFILE_URI_ENHANCED: &str = "urn:ietf:params:rats:pop:profile:enhanced";
+const PROFILE_URI_MAXIMUM: &str = "urn:ietf:params:rats:pop:profile:maximum";
+
+/// Minimum number of checkpoints required per evidence packet (CDDL: 6 => [3* checkpoint])
+const MIN_CHECKPOINTS_PER_PACKET: usize = 3;
+
+/// Map CLI evidence tier to CDDL content-tier integer value.
+///
+/// Per CDDL:
+///   content-tier = &( core: 1, enhanced: 2, maximum: 3 )
+///
+/// CLI mapping:
+///   basic    -> core (1)
+///   standard -> core (1) with VDF
+///   enhanced -> enhanced (2)
+///   maximum  -> maximum (3)
+fn content_tier_from_cli(tier: &str) -> u8 {
+    match tier.to_lowercase().as_str() {
+        "basic" => 1,    // core
+        "standard" => 1, // core (with VDF)
+        "enhanced" => 2, // enhanced
+        "maximum" => 3,  // maximum
+        _ => 1,          // default to core
+    }
+}
+
+/// Map CLI evidence tier to the corresponding profile URI.
+fn profile_uri_from_cli(tier: &str) -> &'static str {
+    match tier.to_lowercase().as_str() {
+        "basic" => PROFILE_URI_CORE,
+        "standard" => PROFILE_URI_CORE,
+        "enhanced" => PROFILE_URI_ENHANCED,
+        "maximum" => PROFILE_URI_MAXIMUM,
+        _ => PROFILE_URI_CORE,
+    }
+}
+
+/// Map CLI attestation tier string to CDDL attestation-tier integer value.
+///
+/// Per CDDL:
+///   attestation-tier = &(
+///       software-only: 1,      T1: AAL1
+///       attested-software: 2,  T2: AAL2
+///       hardware-bound: 3,     T3: AAL3
+///       hardware-hardened: 4,  T4: LoA4
+///   )
+fn attestation_tier_value(has_tpm: bool, tpm_hardware_backed: bool) -> u8 {
+    if tpm_hardware_backed {
+        // Hardware-backed attestation: T3 or T4 depending on features
+        3 // hardware-bound (T3)
+    } else if has_tpm {
+        2 // attested-software (T2)
+    } else {
+        1 // software-only (T1)
+    }
+}
+
 #[derive(Parser)]
 #[command(
     author,
@@ -880,6 +949,23 @@ fn cmd_export(
         ));
     }
 
+    // Enforce minimum 3 checkpoints per evidence packet (CDDL: 6 => [3* checkpoint])
+    if events.len() < MIN_CHECKPOINTS_PER_PACKET {
+        let file_name = file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| file_path.display().to_string());
+        return Err(anyhow!(
+            "Insufficient checkpoints for evidence export.\n\n\
+             The spec requires a minimum of {} checkpoints per evidence packet.\n\
+             You have {} checkpoint(s) for this file.\n\n\
+             Create more checkpoints with: witnessd commit {}",
+            MIN_CHECKPOINTS_PER_PACKET,
+            events.len(),
+            file_name
+        ));
+    }
+
     let config = ensure_dirs()?;
     let dir = &config.data_dir;
     let vdf_params = load_vdf_params(&config);
@@ -1027,28 +1113,76 @@ fn cmd_export(
         _ => "Basic",
     };
 
+    // Compute spec-conformant content-tier and profile URI
+    let spec_content_tier = content_tier_from_cli(tier);
+    let spec_profile_uri = profile_uri_from_cli(tier);
+
+    // Determine attestation tier based on hardware capabilities
+    let (has_tpm, tpm_hardware_backed) = match std::panic::catch_unwind(|| {
+        let provider = tpm::detect_provider();
+        let caps = provider.capabilities();
+        (true, caps.hardware_backed)
+    }) {
+        Ok((_, hw)) => (true, hw),
+        Err(_) => (false, false),
+    };
+    let spec_attestation_tier = attestation_tier_value(has_tpm, tpm_hardware_backed);
+
+    // Generate a packet UUID (16 bytes)
+    let mut packet_id = [0u8; 16];
+    getrandom::getrandom(&mut packet_id).unwrap_or_default();
+
     // Build evidence packet matching the evidence::Packet schema
+    // Checkpoint fields use CDDL integer-key naming in the spec section
     let checkpoints: Vec<serde_json::Value> = events
         .iter()
         .enumerate()
         .map(|(i, ev)| {
             let elapsed_secs = ev.vdf_iterations as f64 / vdf_params.iterations_per_second as f64;
             let elapsed_dur = Duration::from_secs_f64(elapsed_secs);
+            let elapsed_ms = (elapsed_secs * 1000.0) as u64;
+
+            // Generate checkpoint UUID
+            let mut cp_id = [0u8; 16];
+            // Deterministic from event hash for reproducibility
+            cp_id.copy_from_slice(&ev.event_hash[..16]);
+
             serde_json::json!({
                 "ordinal": i as u64,
+                "sequence": (i + 1) as u64,         // CDDL key 1: monotonic sequence (1-based)
+                "checkpoint_id": hex::encode(cp_id), // CDDL key 2: uuid
                 "timestamp": Utc.timestamp_nanos(ev.timestamp_ns).to_rfc3339(),
-                "content_hash": hex::encode(ev.content_hash),
+                "timestamp_ms": (ev.timestamp_ns / 1_000_000) as u64, // CDDL key 3: epoch milliseconds
+                "content_hash": hex::encode(ev.content_hash),   // CDDL key 4: hash-value
                 "content_size": ev.file_size,
+                "char_count": ev.file_size,                     // CDDL key 5: char-count
+                "delta": {                                      // CDDL key 6: edit-delta
+                    "chars_added": if ev.size_delta > 0 { ev.size_delta as u64 } else { 0u64 },
+                    "chars_deleted": if ev.size_delta < 0 { (-ev.size_delta) as u64 } else { 0u64 },
+                    "op_count": 1u64
+                },
                 "message": ev.context_type,
                 "vdf_input": ev.vdf_input.map(hex::encode),
                 "vdf_output": ev.vdf_output.map(hex::encode),
                 "vdf_iterations": ev.vdf_iterations,
+                "claimed_duration_ms": elapsed_ms,              // CDDL key 6 of process-proof
                 "elapsed_time": {
                     "secs": elapsed_dur.as_secs(),
                     "nanos": elapsed_dur.subsec_nanos()
                 },
-                "previous_hash": hex::encode(ev.previous_hash),
-                "hash": hex::encode(ev.event_hash),
+                "previous_hash": hex::encode(ev.previous_hash), // CDDL key 7: prev-hash
+                "hash": hex::encode(ev.event_hash),              // CDDL key 8: checkpoint-hash
+                "process_proof": {                               // CDDL key 9: process-proof (SWF)
+                    "algorithm": 20,                             // swf-argon2id
+                    "params": {
+                        "time_cost": vdf_params.min_iterations,
+                        "memory_cost": 0,
+                        "parallelism": 1,
+                        "iterations": ev.vdf_iterations
+                    },
+                    "input": ev.vdf_input.map(hex::encode),
+                    "claimed_duration_ms": elapsed_ms
+                },
                 "signature": null
             })
         })
@@ -1058,12 +1192,32 @@ fn cmd_export(
         "version": 1,
         "exported_at": Utc::now().to_rfc3339(),
         "strength": strength,
+
+        // === RATS PoP Spec Fields (draft-condrey-rats-pop) ===
+        "spec": {
+            "cbor_tag": CBOR_TAG_EVIDENCE_PACKET,        // CDDL: pop-evidence = #6.1129336656(...)
+            "war_cbor_tag": CBOR_TAG_ATTESTATION_RESULT,  // CDDL: pop-war = #6.1129791826(...)
+            "profile_uri": spec_profile_uri,              // CDDL key 2: profile-uri
+            "packet_id": hex::encode(packet_id),          // CDDL key 3: packet-id (uuid)
+            "content_tier": spec_content_tier,            // CDDL key 13: content-tier
+            "attestation_tier": spec_attestation_tier,    // CDDL key 7: attestation-tier (T1-T4)
+            "min_checkpoints": MIN_CHECKPOINTS_PER_PACKET,
+            "hash_algorithm": "sha256",                   // hash-algorithm: sha256 (1)
+        },
+
         "provenance": null,
         "document": {
             "title": file_path.file_name().unwrap_or_default().to_string_lossy(),
             "path": abs_path_str,
             "final_hash": hex::encode(latest.content_hash),
-            "final_size": latest.file_size
+            "final_size": latest.file_size,
+            // CDDL document-ref fields
+            "content_hash": {
+                "algorithm": 1,    // sha256
+                "digest": hex::encode(latest.content_hash)
+            },
+            "byte_length": latest.file_size as u64,
+            "char_count": latest.file_size as u64,
         },
         "checkpoints": checkpoints,
         "vdf_params": {
@@ -1072,6 +1226,8 @@ fn cmd_export(
             "max_iterations": vdf_params.max_iterations
         },
         "chain_hash": hex::encode(latest.event_hash),
+        "chain_length": events.len(),                    // CDDL attestation-result key 5
+        "chain_duration_secs": total_vdf_time.as_secs(), // CDDL attestation-result key 6
         "declaration": decl,
         "presence": null,
         "hardware": null,
@@ -1144,7 +1300,13 @@ fn cmd_export(
             println!("  Signed: {}", if war_block.signed { "yes" } else { "no" });
             println!("  Checkpoints: {}", events.len());
             println!("  Total VDF time: {:?}", total_vdf_time);
-            println!("  Tier: {}", tier);
+            println!("  Tier: {} (content-tier: {})", tier, spec_content_tier);
+            println!("  Profile: {}", spec_profile_uri);
+            println!("  Attestation tier: T{}", spec_attestation_tier);
+            println!(
+                "  CBOR tags: evidence={}, war={}",
+                CBOR_TAG_EVIDENCE_PACKET, CBOR_TAG_ATTESTATION_RESULT
+            );
         }
         _ => {
             // JSON format (default)
@@ -1155,7 +1317,10 @@ fn cmd_export(
             println!("Evidence exported to: {}", out_path.display());
             println!("  Checkpoints: {}", events.len());
             println!("  Total VDF time: {:?}", total_vdf_time);
-            println!("  Tier: {}", tier);
+            println!("  Tier: {} (content-tier: {})", tier, spec_content_tier);
+            println!("  Profile: {}", spec_profile_uri);
+            println!("  Attestation tier: T{}", spec_attestation_tier);
+            println!("  CBOR tag: {} (evidence packet)", CBOR_TAG_EVIDENCE_PACKET);
         }
     }
 
@@ -1243,6 +1408,66 @@ fn cmd_verify(file_path: &PathBuf, key: Option<PathBuf>) -> Result<()> {
     if ext == "json" {
         // Verify evidence packet
         let data = fs::read(file_path).context("Failed to read evidence file")?;
+
+        // First try to extract spec metadata from the JSON for validation
+        let raw_json: serde_json::Value =
+            serde_json::from_slice(&data).context("Failed to parse evidence JSON")?;
+
+        // Validate spec-conformant fields if present
+        let mut spec_warnings: Vec<String> = Vec::new();
+
+        if let Some(spec) = raw_json.get("spec") {
+            // Validate CBOR tag
+            if let Some(tag) = spec.get("cbor_tag").and_then(|v| v.as_u64()) {
+                if tag != CBOR_TAG_EVIDENCE_PACKET {
+                    spec_warnings.push(format!(
+                        "Evidence CBOR tag mismatch: expected {}, found {}",
+                        CBOR_TAG_EVIDENCE_PACKET, tag
+                    ));
+                }
+            }
+
+            // Validate profile URI
+            if let Some(uri) = spec.get("profile_uri").and_then(|v| v.as_str()) {
+                let valid_uris = [PROFILE_URI_CORE, PROFILE_URI_ENHANCED, PROFILE_URI_MAXIMUM];
+                if !valid_uris.contains(&uri) {
+                    spec_warnings.push(format!("Unknown profile URI: {}", uri));
+                }
+            }
+
+            // Validate content tier
+            if let Some(tier) = spec.get("content_tier").and_then(|v| v.as_u64()) {
+                if !(1..=3).contains(&tier) {
+                    spec_warnings.push(format!(
+                        "Invalid content-tier: {} (expected 1=core, 2=enhanced, 3=maximum)",
+                        tier
+                    ));
+                }
+            }
+
+            // Validate attestation tier
+            if let Some(at) = spec.get("attestation_tier").and_then(|v| v.as_u64()) {
+                if !(1..=4).contains(&at) {
+                    spec_warnings.push(format!(
+                        "Invalid attestation-tier: {} (expected 1-4, T1=software-only..T4=hardware-hardened)",
+                        at
+                    ));
+                }
+            }
+        }
+
+        // Validate minimum checkpoint count
+        if let Some(checkpoints) = raw_json.get("checkpoints").and_then(|v| v.as_array()) {
+            if checkpoints.len() < MIN_CHECKPOINTS_PER_PACKET {
+                spec_warnings.push(format!(
+                    "Insufficient checkpoints: {} (minimum {} required by spec)",
+                    checkpoints.len(),
+                    MIN_CHECKPOINTS_PER_PACKET
+                ));
+            }
+        }
+
+        // Parse and verify the evidence packet
         let packet: evidence::Packet =
             serde_json::from_slice(&data).context("Failed to parse evidence packet")?;
 
@@ -1259,6 +1484,46 @@ fn cmd_verify(file_path: &PathBuf, key: Option<PathBuf>) -> Result<()> {
                         "  Declaration: {}",
                         if decl.verify() { "valid" } else { "INVALID" }
                     );
+                }
+
+                // Show spec conformance info
+                if let Some(spec) = raw_json.get("spec") {
+                    println!();
+                    println!("  Spec conformance (draft-condrey-rats-pop):");
+                    if let Some(uri) = spec.get("profile_uri").and_then(|v| v.as_str()) {
+                        println!("    Profile: {}", uri);
+                    }
+                    if let Some(ct) = spec.get("content_tier").and_then(|v| v.as_u64()) {
+                        let tier_name = match ct {
+                            1 => "core",
+                            2 => "enhanced",
+                            3 => "maximum",
+                            _ => "unknown",
+                        };
+                        println!("    Content tier: {} ({})", ct, tier_name);
+                    }
+                    if let Some(at) = spec.get("attestation_tier").and_then(|v| v.as_u64()) {
+                        let tier_name = match at {
+                            1 => "software-only (T1)",
+                            2 => "attested-software (T2)",
+                            3 => "hardware-bound (T3)",
+                            4 => "hardware-hardened (T4)",
+                            _ => "unknown",
+                        };
+                        println!("    Attestation tier: {}", tier_name);
+                    }
+                    if let Some(tag) = spec.get("cbor_tag").and_then(|v| v.as_u64()) {
+                        println!("    CBOR tag: {}", tag);
+                    }
+                }
+
+                // Print spec warnings
+                if !spec_warnings.is_empty() {
+                    println!();
+                    println!("  Spec warnings:");
+                    for w in &spec_warnings {
+                        println!("    [WARN] {}", w);
+                    }
                 }
             }
             Err(e) => {
@@ -1290,6 +1555,18 @@ fn cmd_verify(file_path: &PathBuf, key: Option<PathBuf>) -> Result<()> {
             let status = if check.passed { "[OK]" } else { "[FAIL]" };
             println!("  {} {}: {}", status, check.name, check.message);
         }
+
+        // Spec-conformant info
+        println!();
+        println!("  Spec reference (draft-condrey-rats-pop):");
+        println!(
+            "    WAR CBOR tag: {} (attestation-result)",
+            CBOR_TAG_ATTESTATION_RESULT
+        );
+        println!(
+            "    Evidence CBOR tag: {} (evidence-packet)",
+            CBOR_TAG_EVIDENCE_PACKET
+        );
 
         if !report.valid {
             println!();

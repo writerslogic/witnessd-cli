@@ -53,7 +53,7 @@ fn test_cli_full_workflow() {
     assert!(stdout.contains("witnessd Status"));
     assert!(stdout.contains("VERIFIED"));
 
-    // 3. Commit
+    // 3. Commit (minimum 3 checkpoints required for export per spec)
     println!("Testing commit...");
     let doc_path = dir.path().join("test.txt");
     fs::write(&doc_path, "First version content").unwrap();
@@ -72,12 +72,25 @@ fn test_cli_full_workflow() {
     );
     assert!(stdout.contains("Checkpoint #2 created"));
 
+    // Third commit required for minimum 3 checkpoints per evidence packet
+    fs::write(
+        &doc_path,
+        "Third version content - even more text added here",
+    )
+    .unwrap();
+    let stdout = run(
+        &["commit", doc_path.to_str().unwrap(), "-m", "Third commit"],
+        None,
+    );
+    assert!(stdout.contains("Checkpoint #3 created"));
+
     // 4. Log
     println!("Testing log...");
     let stdout = run(&["log", doc_path.to_str().unwrap()], None);
     assert!(stdout.contains("Checkpoint History"));
     assert!(stdout.contains("First commit"));
     assert!(stdout.contains("Second commit"));
+    assert!(stdout.contains("Third commit"));
 
     // 5. Export
     println!("Testing export...");
@@ -319,10 +332,23 @@ fn test_cli_export_war_format() {
     let env = CliTestEnv::new();
     env.init();
 
-    // Create and commit a file
+    // Create and commit a file (minimum 3 checkpoints required for export)
     let doc_path = env.dir.path().join("doc.txt");
     fs::write(&doc_path, "WAR format test content").unwrap();
-    env.run_expect_success(&["commit", doc_path.to_str().unwrap(), "-m", "Test"], None);
+    env.run_expect_success(
+        &["commit", doc_path.to_str().unwrap(), "-m", "Test 1"],
+        None,
+    );
+    fs::write(&doc_path, "WAR format test content - revision 2").unwrap();
+    env.run_expect_success(
+        &["commit", doc_path.to_str().unwrap(), "-m", "Test 2"],
+        None,
+    );
+    fs::write(&doc_path, "WAR format test content - revision 3 final").unwrap();
+    env.run_expect_success(
+        &["commit", doc_path.to_str().unwrap(), "-m", "Test 3"],
+        None,
+    );
 
     // Export in WAR format
     let war_path = env.dir.path().join("evidence.war");
