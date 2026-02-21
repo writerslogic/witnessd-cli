@@ -214,8 +214,19 @@ pub fn normalize_path(path: &Path) -> Result<PathBuf> {
 
     // Try to canonicalize if the path exists
     if cleaned.exists() {
-        fs::canonicalize(&cleaned)
-            .map_err(|e| anyhow!("Cannot access path {}: {}", cleaned.display(), e))
+        let canonical = fs::canonicalize(&cleaned)
+            .map_err(|e| anyhow!("Cannot access path {}: {}", cleaned.display(), e))?;
+
+        // On Windows, canonicalize returns UNC paths (\\?\C:\...) — strip the prefix
+        #[cfg(target_os = "windows")]
+        {
+            let s = canonical.to_string_lossy();
+            if let Some(stripped) = s.strip_prefix(r"\\?\") {
+                return Ok(PathBuf::from(stripped));
+            }
+        }
+
+        Ok(canonical)
     } else {
         // For non-existent paths, just return the cleaned version
         Ok(cleaned)
