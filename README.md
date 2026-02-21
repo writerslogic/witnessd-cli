@@ -1,9 +1,39 @@
-# witnessd-cli
+<p align="center">
+  <strong>witnessd-cli</strong><br>
+  Command-line interface for cryptographic authorship witnessing
+</p>
 
-Command-line interface for [witnessd](https://github.com/writerslogic/witnessd) — cryptographic authorship witnessing for writers and creators.
+<p align="center">
+  <a href="https://doi.org/10.5281/zenodo.18480372"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.18480372.svg" alt="DOI"></a>
+  <a href="https://arxiv.org/abs/2602.01663"><img src="https://img.shields.io/badge/arXiv-2602.01663-b31b1b.svg" alt="arXiv"></a>
+  <a href="https://orcid.org/0009-0003-1849-2963"><img src="https://img.shields.io/badge/ORCID-0009--0003--1849--2963-green.svg" alt="ORCID"></a>
+</p>
 
-[![Build Status](https://github.com/writerslogic/witnessd-cli/workflows/CI/badge.svg)](https://github.com/writerslogic/witnessd-cli/actions)
-[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+<p align="center">
+  <a href="https://github.com/writerslogic/witnessd-cli/actions"><img src="https://github.com/writerslogic/witnessd-cli/workflows/CI/badge.svg" alt="Build Status"></a>
+  <img src="https://img.shields.io/badge/rust-1.75%2B-orange" alt="Rust">
+  <a href="https://github.com/writerslogic/witnessd-cli/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License"></a>
+  <img src="https://img.shields.io/badge/Patent-US%2019%2F460%2C364%20Pending-blue" alt="Patent Pending">
+</p>
+
+---
+
+> [!NOTE]
+> **Patent Pending:** USPTO Application No. 19/460,364 — *"Falsifiable Process Evidence via Cryptographic Causality Locks and Behavioral Attestation"*
+
+---
+
+## Overview
+
+**witnessd-cli** is the command-line interface for [witnessd-core](https://github.com/writerslogic/witnessd) — producing independently verifiable, tamper-evident process evidence constraining when and how a document could have been created.
+
+This repository contains the CLI tool and Linux packaging. For the full witnessd ecosystem:
+
+| Repository | Description |
+|:-----------|:------------|
+| **[witnessd](https://github.com/writerslogic/witnessd)** | Core cryptographic library (Apache-2.0) |
+| **[witnessd-cli](https://github.com/writerslogic/witnessd-cli)** | Command-line interface + Linux packaging (this repo, GPL-3.0) |
+| **[witnessd-docs](https://github.com/writerslogic/witnessd-docs)** | Documentation, schemas, and specifications |
 
 ## Installation
 
@@ -31,28 +61,113 @@ sudo cp target/release/witnessd-cli /usr/local/bin/witnessd
 
 ## Usage
 
+### Getting Started
+
 ```bash
-witnessd init                              # Initialize witnessd
+witnessd init                              # Initialize keys, identity, and database
 witnessd calibrate                         # Calibrate VDF for your machine
-witnessd commit document.md -m "Draft"     # Create checkpoint
-witnessd log document.md                   # View history
-witnessd export document.md -t enhanced    # Export as JSON
+witnessd commit document.md -m "Draft"     # Create checkpoint with time proof
+witnessd log document.md                   # View checkpoint history
+```
+
+### Evidence Export and Verification
+
+```bash
+witnessd export document.md -t enhanced    # Export as JSON evidence packet
 witnessd export document.md -f war -o proof.war  # Export as WAR block
-witnessd verify evidence.json              # Verify JSON packet
+witnessd verify evidence.json              # Verify JSON evidence packet
 witnessd verify proof.war                  # Verify WAR block
+```
+
+### Evidence Collection
+
+```bash
+witnessd track start                       # Start keystroke timing collection
+witnessd track status                      # Check tracking status
+witnessd track stop                        # Stop tracking
+witnessd presence start                    # Start presence verification session
+witnessd fingerprint status                # Show fingerprint collection status
+```
+
+### Daemon and Folder Watching
+
+```bash
+witnessd start                             # Start background daemon
+witnessd stop                              # Stop background daemon
+witnessd watch add ~/Documents             # Auto-checkpoint a folder
+witnessd status                            # Show system status
+```
+
+## Evidence Tiers
+
+| Tier | Content | Use Case |
+|:-----|:--------|:---------|
+| `basic` | Content hashes + timestamps | Quick verification |
+| `standard` | + VDF time proofs + signed declaration | Recommended default |
+| `enhanced` | + keystroke timing evidence | Stronger authorship claims |
+| `maximum` | + presence verification + full forensics | Maximum assurance |
+
+## Commands
+
+| Command | Aliases | Description |
+|:--------|:--------|:------------|
+| `init` | | Initialize witnessd (keys, database, identity) |
+| `calibrate` | | Calibrate VDF performance for this machine |
+| `commit` | `checkpoint` | Create a checkpoint with VDF time proof |
+| `log` | `history` | Show checkpoint history for a file |
+| `export` | | Export evidence packet (JSON or WAR format) |
+| `verify` | | Verify evidence packet or database integrity |
+| `track` | | Manage keystroke timing collection |
+| `presence` | | Manage presence verification sessions |
+| `fingerprint` | `fp` | Manage author fingerprints |
+| `watch` | | Auto-checkpoint watched folders |
+| `start` / `stop` | | Manage the witnessd daemon |
+| `session` | | Manage document sessions |
+| `config` | `cfg` | View and edit configuration |
+| `status` | | Show system status and configuration |
+| `list` | `ls` | List all tracked documents |
+
+## Security
+
+> [!IMPORTANT]
+> witnessd provides **independently verifiable, tamper-evident process evidence**, not absolute proof. The value lies in converting unsubstantiated doubt into testable claims across independent trust boundaries.
+
+**Privacy-first design:**
+- Keystroke tracking captures **timing only** — never the keys you press
+- Voice fingerprinting is **off by default** and requires explicit consent
+- All keys are stored with restrictive file permissions (0600)
+- Database uses HMAC-based tamper detection
+
+## Development
+
+```bash
+cargo test                        # Run tests
+cargo clippy -- -D warnings       # Lint
+cargo fmt --all                   # Format
 ```
 
 ## Linux Packaging
 
 Linux packaging configs (Debian, RPM, AppImage, systemd) are in the `packaging/linux/` directory.
 
+## Citation
+
+```bibtex
+@article{condrey2026witnessd,
+  title={Witnessd: Proof-of-process via Adversarial Collapse},
+  author={Condrey, David},
+  journal={arXiv preprint arXiv:2602.01663},
+  year={2026},
+  doi={10.48550/arXiv.2602.01663}
+}
+```
+
+> **Abstract:** Digital signatures prove key possession but not authorship. We introduce *proof-of-process* — a mechanism combining jitter seals, Verifiable Delay Functions, timestamp anchors, keystroke validation, and optional hardware attestation.
+>
+> — [arXiv:2602.01663](https://arxiv.org/abs/2602.01663) [cs.CR]
+
 ## License
 
 Licensed under the [GNU General Public License v3.0](LICENSE).
 
 For commercial licensing inquiries (embedding witnessd in proprietary software), contact: licensing@writerslogic.com
-
-## Related
-
-- [witnessd](https://github.com/writerslogic/witnessd) — Core cryptographic library
-- [witnessd-docs](https://github.com/writerslogic/witnessd-docs) — Documentation, schemas, and specifications
