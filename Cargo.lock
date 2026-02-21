@@ -4551,7 +4551,7 @@ dependencies = [
 [[package]]
 name = "witnessd-core"
 version = "0.1.0"
-source = "git+https://github.com/writerslogic/witnessd?branch=main#d9b31f6bcbd9308cce35bba5fd74c36ca0425063"
+source = "git+https://github.com/writerslogic/witnessd?branch=main#b4306fce18f514b463c4199374c474479718009d"
 dependencies = [
  "accessibility",
  "aes-gcm",
@@ -4604,6 +4604,7 @@ dependencies = [
  "security-framework 3.5.1",
  "security-framework-sys",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sha2",
  "statrs",
