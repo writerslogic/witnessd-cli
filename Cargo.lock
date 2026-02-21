@@ -4551,7 +4551,7 @@ dependencies = [
 [[package]]
 name = "witnessd-core"
 version = "0.1.0"
-source = "git+https://github.com/writerslogic/witnessd?branch=main#3aa96dd81ba8e31310afb2bcea2671460fdd881e"
+source = "git+https://github.com/writerslogic/witnessd?branch=main#63e9073ca48f7e2a74239d38a0aaac58876b3969"
 dependencies = [
  "accessibility",
  "aes-gcm",
