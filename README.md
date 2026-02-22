@@ -73,7 +73,7 @@ witnessd log document.md                   # View checkpoint history
 ### Evidence Export and Verification
 
 ```bash
-witnessd export document.md -t enhanced    # Export as JSON evidence packet
+witnessd export document.md -t core        # Export as JSON evidence packet
 witnessd export document.md -f war -o proof.war  # Export as WAR block
 witnessd verify evidence.json              # Verify JSON evidence packet
 witnessd verify proof.war                  # Verify WAR block
@@ -100,12 +100,13 @@ witnessd status                            # Show system status
 
 ## Evidence Tiers
 
-| Tier | Content | Use Case |
-|:-----|:--------|:---------|
-| `basic` | Content hashes + timestamps | Quick verification |
-| `standard` | + VDF time proofs + signed declaration | Recommended default |
-| `enhanced` | + keystroke timing evidence | Stronger authorship claims |
-| `maximum` | + presence verification + full forensics | Maximum assurance |
+Per [draft-condrey-rats-pop](https://github.com/writerslogic/draft-condrey-rats-pop) CDDL: `content-tier = core(1) / enhanced(2) / maximum(3)`
+
+| Tier | Value | Content | Use Case |
+|:-----|:------|:--------|:---------|
+| `core` | 1 | Checkpoint chain + VDF proofs + keystroke jitter evidence | Default — recommended for most workflows |
+| `enhanced` | 2 | + TPM/hardware attestation | Stronger claims with hardware backing |
+| `maximum` | 3 | + behavioral analysis + external anchors | Maximum assurance |
 
 ## Commands
 
@@ -126,6 +127,27 @@ witnessd status                            # Show system status
 | `config` | `cfg` | View and edit configuration |
 | `status` | | Show system status and configuration |
 | `list` | `ls` | List all tracked documents |
+
+## Architecture
+
+```
+witnessd-cli/
+├── src/
+│   ├── main.rs              # CLI entry point and command dispatch
+│   └── smart_defaults.rs    # Platform-aware default configuration
+├── tests/
+│   └── cli_e2e.rs           # End-to-end CLI integration tests
+├── packaging/
+│   └── linux/               # Linux distribution packaging
+│       ├── debian/           # .deb package config
+│       ├── rpm/              # .rpm package config
+│       ├── appimage/         # AppImage config
+│       ├── systemd/          # systemd service units
+│       └── scripts/          # Build and install scripts
+├── install.sh               # Quick install script
+├── Cargo.toml               # Dependencies (witnessd-core via git)
+└── CITATION.cff             # Citation metadata
+```
 
 ## Security
 
@@ -148,7 +170,7 @@ cargo fmt --all                   # Format
 
 ## Linux Packaging
 
-Linux packaging configs (Debian, RPM, AppImage, systemd) are in the `packaging/linux/` directory.
+Linux packaging configs (Debian, RPM, AppImage, systemd) are in the [`packaging/linux/`](packaging/linux/) directory. See the [Linux Packaging README](packaging/linux/README-LINUX-PACKAGING.md) for details.
 
 ## Citation
 
